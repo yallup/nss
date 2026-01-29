@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nss"
+version = "0.1.0"
+description = "Nested Sampling in jax"
+requires-python = ">=3.10"
+dependencies = [
+    "arviz>=0.22.0",
+    "blackjax",
+    "distrax>=0.1.5",
+    "ipython>=8.0.0",
+    "matplotlib>=3.5.0",
+    "ott-jax>=0.5.2",
+    "tqdm>=4.67.1",
+]
+
+[tool.uv.sources]
+blackjax = { git = "https://github.com/handley-lab/blackjax", rev = "refactor-slice-sampling-api" }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nss"]
