@@ -518,10 +518,9 @@ def run_nuts_sequential_mc(
     initial_samples,
     target_ess=0.9,
     target_acceptance_rate=0.8,
-    warmup_steps=200,
+    warmup_steps=50,
 ):
-    def logdensity_fn(x):
-        return loglikelihood_fn(x) + prior_logprob(x)
+    """SMC with NUTS kernel, using window adaptation at each rung to tune parameters."""
 
     kernel = blackjax.nuts.build_kernel()
 
@@ -534,28 +533,41 @@ def run_nuts_sequential_mc(
             inverse_mass_matrix=inverse_mass_matrix,
         )
 
-    adapt = blackjax.window_adaptation(
-        blackjax.nuts,
-        logdensity_fn,
-        target_acceptance_rate=target_acceptance_rate,
-    )
-    rng_key, warmup_key = jax.random.split(rng_key)
-    (_, parameters), adapt_info = adapt.run(
-        warmup_key, blackjax.ns.utils.get_first_row(initial_samples), warmup_steps
-    )
-
+    # Initial parameters from particle covariance
+    imm = blackjax.smc.tuning.from_particles.inverse_mass_matrix_from_particles(
+        initial_samples
+    ).diagonal()
     init_params = {
-        "inverse_mass_matrix": parameters["inverse_mass_matrix"],
-        "step_size": parameters["step_size"],
+        "inverse_mass_matrix": imm,
+        "step_size": 0.1,
     }
 
     def update_fn(key, state, info):
-        imm = blackjax.smc.tuning.from_particles.inverse_mass_matrix_from_particles(
-            state.particles
-        ).diagonal()
-        iss = parameters["step_size"] * (1 / jnp.sqrt(state.lmbda))
+        """Run window adaptation on a random particle to tune step size and mass matrix."""
+        lmbda = state.lmbda
+
+        def tempered_logdensity(x):
+            return prior_logprob(x) + lmbda * loglikelihood_fn(x)
+
+        # Pick a random particle to run adaptation from
+        n_particles = jax.tree_util.tree_leaves(state.particles)[0].shape[0]
+        key, idx_key, adapt_key = jax.random.split(key, 3)
+        idx = jax.random.randint(idx_key, (), 0, n_particles)
+        start_position = jax.tree_util.tree_map(lambda x: x[idx], state.particles)
+
+        # Run window adaptation
+        adapt = blackjax.window_adaptation(
+            blackjax.nuts,
+            tempered_logdensity,
+            target_acceptance_rate=target_acceptance_rate,
+        )
+        (_, parameters), _ = adapt.run(adapt_key, start_position, warmup_steps)
+
         return blackjax.smc.extend_params(
-            {"inverse_mass_matrix": imm, "step_size": iss}
+            {
+                "inverse_mass_matrix": parameters["inverse_mass_matrix"],
+                "step_size": parameters["step_size"],
+            }
         )
 
     smc_alg = blackjax.inner_kernel_tuning(
@@ -588,6 +600,7 @@ def run_nuts_sequential_mc(
     log_zs = []
     all_log_weights = []
     all_particles = []
+    total_integration_steps = 0
     t0 = timer()
     with tqdm.tqdm(desc="SMC-NUTS", unit=" step") as pbar:
         while state[0].lmbda < 1:
@@ -596,6 +609,7 @@ def run_nuts_sequential_mc(
             log_zs.append(smc_info[1])
             all_log_weights.append(jnp.log(state.sampler_state.weights + 1e-16))
             all_particles.append(state.sampler_state.particles)
+            total_integration_steps += int(jnp.sum(smc_info.update_info.num_integration_steps))
             pbar.set_postfix({"λ": f"{state[0].lmbda:.3f}", "logZ": f"{sum(log_zs):.2f}"})
             pbar.update(1)
     t1 = timer()
@@ -605,11 +619,11 @@ def run_nuts_sequential_mc(
     logzs = jnp.array(log_zs).sum()
     particles = concat_particles(all_particles)
     smc_state = SMCState(particles=particles, weights=weights)
+    # Evals: MCMC integration steps + adaptation steps per rung
     res = Results(
         name="SMC NUTS",
         time=t1 - t0,
-        evals=jnp.sum(smc_info.update_info.num_integration_steps) * steps
-        + warmup_steps * adapt_info[1].num_integration_steps.sum(),
+        evals=total_integration_steps + steps * warmup_steps,
         ess=float(ess),
         logZs=logzs,
     )

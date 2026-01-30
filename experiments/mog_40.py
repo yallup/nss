@@ -91,6 +91,7 @@ rng_key, true_samples_key = jax.random.split(rng_key)
 true_samples = mog.sample(seed=true_samples_key, sample_shape=(1000,))
 
 # Plot
+rng_key, plot_key = jax.random.split(rng_key)
 plotting_bounds = (-loc_scaling * 1.4, loc_scaling * 1.4)
 plot_comparison_grid(
     true_samples=true_samples,
@@ -98,6 +99,7 @@ plot_comparison_grid(
     algo_names=["SS", "NUTS", "NSS", "NS-RW", "SMC-SS", "SMC-RW", "SMC-IRMH", "SMC-HMC"],
     bounds=plotting_bounds,
     output_prefix="plots/mixture_gaussians",
+    rng_key=plot_key,
 )
 
 # Set names

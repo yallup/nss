@@ -121,6 +121,7 @@ if __name__ == "__main__":
     hmc_samples = {"theta": hmc_states.position["theta"][::10], "z": hmc_states.position["z"][::10]}
 
     # Plot
+    key, plot_key = jax.random.split(key)
     plotting_bounds = (-extent, extent)
     plot_comparison_grid(
         true_samples=true_samples,
@@ -128,6 +129,7 @@ if __name__ == "__main__":
         algo_names=["SS", "NUTS", "NSS", "NS-RW", "SMC-SS", "SMC-RW", "SMC-IRMH", "SMC-HMC"],
         bounds=plotting_bounds,
         output_prefix="plots/funnel",
+        rng_key=plot_key,
         dim_y="z",
     )
 

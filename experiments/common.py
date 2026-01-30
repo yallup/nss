@@ -107,6 +107,7 @@ def plot_comparison_grid(
     algo_names,
     bounds,
     output_prefix,
+    rng_key=None,
     dim_x=0,
     dim_y=1,
     n_plot=1000,
@@ -125,6 +126,8 @@ def plot_comparison_grid(
         (min, max) for plot axes.
     output_prefix : str
         Prefix for output files (e.g., "plots/mixture_gaussians").
+    rng_key : PRNGKey, optional
+        Random key for subsampling. If None, uses default key.
     dim_x : int
         Dimension index for x-axis.
     dim_y : int or str
@@ -132,9 +135,12 @@ def plot_comparison_grid(
     n_plot : int
         Number of samples to plot per panel.
     """
+    if rng_key is None:
+        rng_key = jax.random.PRNGKey(42)
+
     fig, axes = create_plot_grid()
 
-    def get_xy(samples, n=None):
+    def get_xy(samples, key, n=None):
         if isinstance(samples, dict):
             # For funnel-style dict samples
             x = samples["theta"]
@@ -143,10 +149,12 @@ def plot_comparison_grid(
             x = samples[:, dim_x]
             y = samples[:, dim_y]
         if n is not None and len(x) > n:
-            x, y = x[:n], y[:n]
+            idx = jax.random.choice(key, len(x), shape=(n,), replace=False)
+            x, y = x[idx], y[idx]
         return x, y
 
-    true_x, true_y = get_xy(true_samples, n_plot)
+    rng_key, true_key = jax.random.split(rng_key)
+    true_x, true_y = get_xy(true_samples, true_key, n_plot)
 
     # Layout: SS, NUTS, Truth (top row)
     #         NSS, NS-RW, SMC-SS (middle row)
@@ -161,12 +169,13 @@ def plot_comparison_grid(
     scatter_panel(axes[0, 2], true_x, true_y, "Truth", color="C1")
 
     # Plot algorithms
-    for (row, col), samples, name in zip(positions, algo_samples, algo_names):
+    algo_keys = jax.random.split(rng_key, len(algo_samples))
+    for (row, col), samples, name, key in zip(positions, algo_samples, algo_names, algo_keys):
         ax = axes[row, col]
         # Plot truth as background
         ax.scatter(true_x, true_y, s=8, c="C1", alpha=0.3, rasterized=True)
         # Plot algorithm samples
-        x, y = get_xy(samples, n_plot)
+        x, y = get_xy(samples, key, n_plot)
         scatter_panel(ax, x, y, name, color="C0")
 
     # Set bounds
