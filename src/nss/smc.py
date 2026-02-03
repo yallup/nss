@@ -117,13 +117,13 @@ def run_independent_sequential_mc(
     all_particles = []
     t0 = timer()
     with tqdm.tqdm(desc="SMC-IRMH", unit=" step") as pbar:
-        while state[0].lmbda < 1:
+        while state[0].tempering_param < 1:
             (state, rng_key), smc_info = one_step((state, rng_key), None)
             steps += 1
             log_zs.append(smc_info[1])
             all_log_weights.append(jnp.log(state.sampler_state.weights + 1e-16))
             all_particles.append(state.sampler_state.particles)
-            pbar.set_postfix({"λ": f"{state[0].lmbda:.3f}", "logZ": f"{sum(log_zs):.2f}"})
+            pbar.set_postfix({"λ": f"{state[0].tempering_param:.3f}", "logZ": f"{sum(log_zs):.2f}"})
             pbar.update(1)
 
     t1 = timer()
@@ -236,7 +236,7 @@ def run_rw_sequential_mc(
     all_particles = []
     t0 = timer()
     with tqdm.tqdm(desc="SMC-RW", unit=" step") as pbar:
-        while state[0].lmbda < 1:
+        while state[0].tempering_param < 1:
             if max_steps is not None and steps >= max_steps:
                 break
             (state, rng_key), smc_info = one_step((state, rng_key), None)
@@ -244,7 +244,7 @@ def run_rw_sequential_mc(
             log_zs.append(smc_info[1])
             all_log_weights.append(jnp.log(state.sampler_state.weights + 1e-16))
             all_particles.append(state.sampler_state.particles)
-            pbar.set_postfix({"λ": f"{state[0].lmbda:.3f}", "logZ": f"{sum(log_zs):.2f}"})
+            pbar.set_postfix({"λ": f"{state[0].tempering_param:.3f}", "logZ": f"{sum(log_zs):.2f}"})
             pbar.update(1)
     t1 = timer()
     cumulative_log_zs = jnp.cumsum(jnp.array(log_zs))
@@ -390,16 +390,16 @@ def run_hmc_sequential_mc(
     all_particles = []
     t0 = timer()
     with tqdm.tqdm(desc="SMC-HMC", unit=" step") as pbar:
-        while state[0].lmbda < 1:
+        while state[0].tempering_param < 1:
             if max_steps is not None and steps >= max_steps:
-                print(f"SMC-HMC reached max steps ({max_steps}). Terminating at lambda={state[0].lmbda:.4f}")
+                print(f"SMC-HMC reached max steps ({max_steps}). Terminating at lambda={state[0].tempering_param:.4f}")
                 break
             (state, rng_key), smc_info = one_step((state, rng_key), None)
             steps += 1
             log_zs.append(smc_info[1])
             all_log_weights.append(jnp.log(state.sampler_state.weights + 1e-16))
             all_particles.append(state.sampler_state.particles)
-            pbar.set_postfix({"λ": f"{state[0].lmbda:.3f}", "logZ": f"{sum(log_zs):.2f}"})
+            pbar.set_postfix({"λ": f"{state[0].tempering_param:.3f}", "logZ": f"{sum(log_zs):.2f}"})
             pbar.update(1)
     t1 = timer()
     cumulative_log_zs = jnp.cumsum(jnp.array(log_zs))
@@ -481,7 +481,7 @@ def run_ss_sequential_mc(
     evals = 0
     t0 = timer()
     with tqdm.tqdm(desc="SMC-SS", unit=" step") as pbar:
-        while state[0].lmbda < 1:
+        while state[0].tempering_param < 1:
             (state, rng_key), smc_info = one_step((state, rng_key), None)
             steps += 1
             log_zs.append(smc_info[1])
@@ -491,7 +491,7 @@ def run_ss_sequential_mc(
                 smc_info.update_info.num_steps.sum()
                 + smc_info.update_info.num_shrink.sum()
             )
-            pbar.set_postfix({"λ": f"{state[0].lmbda:.3f}", "logZ": f"{sum(log_zs):.2f}"})
+            pbar.set_postfix({"λ": f"{state[0].tempering_param:.3f}", "logZ": f"{sum(log_zs):.2f}"})
             pbar.update(1)
     t1 = timer()
     cumulative_log_zs = jnp.cumsum(jnp.array(log_zs))
@@ -544,7 +544,7 @@ def run_nuts_sequential_mc(
 
     def update_fn(key, state, info):
         """Run window adaptation on a random particle to tune step size and mass matrix."""
-        lmbda = state.lmbda
+        lmbda = state.tempering_param
 
         def tempered_logdensity(x):
             return prior_logprob(x) + lmbda * loglikelihood_fn(x)
@@ -603,14 +603,14 @@ def run_nuts_sequential_mc(
     total_integration_steps = 0
     t0 = timer()
     with tqdm.tqdm(desc="SMC-NUTS", unit=" step") as pbar:
-        while state[0].lmbda < 1:
+        while state[0].tempering_param < 1:
             (state, rng_key), smc_info = one_step((state, rng_key), None)
             steps += 1
             log_zs.append(smc_info[1])
             all_log_weights.append(jnp.log(state.sampler_state.weights + 1e-16))
             all_particles.append(state.sampler_state.particles)
             total_integration_steps += int(jnp.sum(smc_info.update_info.num_integration_steps))
-            pbar.set_postfix({"λ": f"{state[0].lmbda:.3f}", "logZ": f"{sum(log_zs):.2f}"})
+            pbar.set_postfix({"λ": f"{state[0].tempering_param:.3f}", "logZ": f"{sum(log_zs):.2f}"})
             pbar.update(1)
     t1 = timer()
     cumulative_log_zs = jnp.cumsum(jnp.array(log_zs))

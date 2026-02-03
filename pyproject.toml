@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-blackjax = { git = "https://github.com/handley-lab/blackjax", rev = "refactor-slice-sampling-api" }
+blackjax = { git = "https://github.com/handley-lab/blackjax", rev = "nested_sampling" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/nss"]
