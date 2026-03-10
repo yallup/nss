@@ -7,11 +7,10 @@ import jax.flatten_util
 import jax.numpy as jnp
 import tqdm
 from blackjax import SamplingAlgorithm
-from blackjax.mcmc.random_walk import RWState
-from blackjax.ns.adaptive import build_kernel as build_adaptive_kernel
+from blackjax.mcmc import random_walk
 from blackjax.ns.adaptive import init
-from blackjax.ns.base import delete_fn, init_state_strategy
-from blackjax.ns.from_mcmc import update_with_mcmc_take_last
+from blackjax.ns.base import init_state_strategy
+from blackjax.ns.from_mcmc import build_kernel as build_mcmc_ns_kernel
 from blackjax.ns.utils import finalise, log_weights
 
 from nss.utils import Results, safe_ess
@@ -81,56 +80,25 @@ def run_rw_nested_sampling(
     num_delete=1,
     termination=-3,
 ):
-    """Run the Nested Sampling algorithm."""
+    """Run the Nested Sampling algorithm with Random Walk MH."""
     init_state_fn = partial(
         init_state_strategy,
         logprior_fn=prior_logprob,
         loglikelihood_fn=loglikelihood_fn,
     )
 
-    add_kernel = blackjax.mcmc.random_walk.build_additive_step()
+    # RWMH step function that takes cov as a keyword argument
+    add_kernel = random_walk.build_additive_step()
 
-    def build_nsrw_kernel(num_delete, num_inner_steps, update_inner_kernel_params_fn):
-        def constrained_rw(rng_key, state, loglikelihood_0, **params):
-            def proposal_distribution(key, position):
-                x, ravel_fn = jax.flatten_util.ravel_pytree(position)
-                return ravel_fn(
-                    jax.random.multivariate_normal(
-                        key, jnp.zeros_like(x), params["cov"]
-                    )
-                )
+    def rwmh_step_fn(rng_key, state, logdensity_fn, cov):
+        """RWMH step with covariance passed as kwarg."""
+        def random_step(key, position):
+            x, ravel_fn = jax.flatten_util.ravel_pytree(position)
+            return ravel_fn(jax.random.multivariate_normal(key, jnp.zeros_like(x), cov))
 
-            rng_key, step_key = jax.random.split(rng_key)
-            mcmc_state = RWState(state.position, state.logdensity)
+        return add_kernel(rng_key, state, logdensity_fn, random_step)
 
-            new_mcmc_state, mcmc_info = add_kernel(
-                step_key, mcmc_state, prior_logprob, proposal_distribution
-            )
-            proposed_state = init_state_fn(
-                new_mcmc_state.position, loglikelihood_birth=loglikelihood_0
-            )
-            within_contour = proposed_state.loglikelihood > loglikelihood_0
-            is_accepted = within_contour
-            new_state = jax.lax.cond(
-                is_accepted,
-                lambda _: proposed_state,
-                lambda _: state,
-                operand=None,
-            )
-
-            return new_state, mcmc_info
-
-        inner_kernel = update_with_mcmc_take_last(constrained_rw, num_inner_steps)
-
-        _delete_fn = partial(delete_fn, num_delete=num_delete)
-
-        kernel = build_adaptive_kernel(
-            _delete_fn,
-            inner_kernel,
-            update_inner_kernel_params_fn=update_inner_kernel_params_fn,
-        )
-        return kernel
-
+    # Adaptive covariance update
     def update_fn(rng_key, state, info, _):
         cov = blackjax.smc.tuning.from_particles.particles_covariance_matrix(
             state.particles.position
@@ -140,31 +108,25 @@ def run_rw_nested_sampling(
         cov *= scale**2
         return {"cov": cov}
 
-    def ns_mcmc_kernel(
-        logprior_fn,
-        loglikelihood_fn,
-        num_delete=10,
-        num_inner_steps=10,
-    ):
-        step_fn = build_nsrw_kernel(num_delete, num_inner_steps, update_fn)
-
-        def init_fn(position, rng_key=None):
-            # Vectorize the functions for parallel evaluation over particles
-            # vmap maps over positional args, keyword args (like loglikelihood_birth) are broadcast
-            return init(
-                position,
-                init_state_fn=jax.vmap(init_state_fn),
-                update_inner_kernel_params_fn=update_fn,
-            )
-
-        return SamplingAlgorithm(init_fn, step_fn)
-
-    algo = ns_mcmc_kernel(
-        logprior_fn=prior_logprob,
-        loglikelihood_fn=loglikelihood_fn,
-        num_delete=num_delete,
+    # Build the NS kernel using from_mcmc infrastructure
+    step_fn = build_mcmc_ns_kernel(
+        init_state_fn=init_state_fn,
+        logdensity_fn=prior_logprob,
+        mcmc_init_fn=random_walk.init,
+        mcmc_step_fn=rwmh_step_fn,
         num_inner_steps=num_mcmc_steps,
+        update_inner_kernel_params_fn=update_fn,
+        num_delete=num_delete,
     )
+
+    def init_fn(position, rng_key=None):
+        return init(
+            position,
+            init_state_fn=jax.vmap(init_state_fn),
+            update_inner_kernel_params_fn=update_fn,
+        )
+
+    algo = SamplingAlgorithm(init_fn, step_fn)
     rng_key, init_key, sample_key = jax.random.split(rng_key, 3)
     state = algo.init(initial_samples)
 
@@ -195,7 +157,7 @@ def run_rw_nested_sampling(
     res = Results(
         name="NS-RW",
         time=t1 - t0,
-        evals=jnp.prod(jnp.array([final_state.update_info.acceptance_rate.shape])),
+        evals=final_state.update_info.is_accepted.size,
         ess=int(safe_ess(logw.mean(axis=-1))),
         logZs=logzs,
     )
